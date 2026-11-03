@@ -1,0 +1,60 @@
+# n8n plus a local mail catcher. Convex and Next.js run on the host (npm run dev).
+# Start with: cp .env.example .env  (fill in the three secrets)  then  docker compose up
+services:
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    ports:
+      - "8025:8025" # web UI where the emails show up
+    restart: unless-stopped
+
+  # One-shot: loads the workflows and the SMTP credential into n8n's volume, then exits.
+  n8n-import:
+    image: n8nio/n8n:${N8N_VERSION:-2.8.4}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        n8n import:credentials --input=/seed/credentials/mailhog.json &&
+        n8n import:workflow --separate --input=/seed/workflows &&
+        n8n publish:workflow --id=lendloopError01 &&
+        n8n publish:workflow --id=lendloopNotify01 &&
+        n8n publish:workflow --id=lendloopRemind01
+    environment:
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY in .env}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/credentials:/seed/credentials:ro
+      - ./n8n/workflows:/seed/workflows:ro
+
+  n8n:
+    image: n8nio/n8n:${N8N_VERSION:-2.8.4}
+    depends_on:
+      n8n-import:
+        condition: service_completed_successfully
+      mailhog:
+        condition: service_started
+    ports:
+      - "5678:5678"
+    environment:
+      GENERIC_TIMEZONE: UTC
+      TZ: UTC
+      WEBHOOK_URL: http://localhost:5678/
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY in .env}
+      # The workflows read their secrets and settings from the environment ($env.*),
+      # so none of them are stored in the workflow JSON.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      N8N_WEBHOOK_SECRET: ${N8N_WEBHOOK_SECRET:?set N8N_WEBHOOK_SECRET in .env}
+      N8N_CALLBACK_SECRET: ${N8N_CALLBACK_SECRET:?set N8N_CALLBACK_SECRET in .env}
+      # From inside the container, a Convex deployment on the host is reachable at host.docker.internal.
+      CONVEX_SITE_URL: ${CONVEX_SITE_URL:?set CONVEX_SITE_URL in .env}
+      NOTIFY_CHANNEL: ${NOTIFY_CHANNEL:-email}
+      MAIL_FROM: ${MAIL_FROM:-lendloop@example.test}
+      # Execution payloads contain recipient emails: keep them for a week at most.
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: "168"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    restart: unless-stopped
+
+volumes:
+  n8n_data:

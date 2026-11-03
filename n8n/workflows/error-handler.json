@@ -1,0 +1,126 @@
+{
+  "id": "lendloopError01",
+  "name": "LendLoop - error handler",
+  "active": false,
+  "nodes": [
+    {
+      "id": "n35",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "n36",
+      "name": "Build failure report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Turns an n8n error into a small, signed report for Convex. The message is cut\n// short so a stack trace or an address inside an error text is not copied over.\nconst e = $json.execution ?? {};\nconst body = JSON.stringify({\n  workflow: String($json.workflow?.name ?? 'unknown').slice(0, 60),\n  node: String(e.lastNodeExecuted ?? 'unknown').slice(0, 60),\n  message: String(e.error?.message ?? 'unknown error').slice(0, 200),\n  executionId: String(e.id ?? Date.now()),\n});\nconst t = Math.floor(Date.now() / 1000);\nreturn [{ json: { body, t, message: `${t}.${body}` } }];\n"
+      }
+    },
+    {
+      "id": "n37",
+      "name": "Sign failure report",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        440,
+        200
+      ],
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.message }}",
+        "dataPropertyName": "expected",
+        "secret": "={{ $env.N8N_CALLBACK_SECRET }}",
+        "encoding": "hex"
+      }
+    },
+    {
+      "id": "n38",
+      "name": "Report failure to Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CONVEX_SITE_URL }}/automation/failure",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-lendloop-signature",
+              "value": "=t={{ $json.t }},v1={{ $json.expected }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build failure report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build failure report": {
+      "main": [
+        [
+          {
+            "node": "Sign failure report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign failure report": {
+      "main": [
+        [
+          {
+            "node": "Report failure to Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

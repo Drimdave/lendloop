@@ -1,0 +1,28 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - name: Workflows are in sync with their sources
+        run: npm run build:n8n && git diff --exit-code n8n/workflows
+      - name: Build
+        run: npm run build
+        env:
+          # Dummy, correctly shaped values: the build does not call Clerk or Convex.
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_bGVuZGxvb3AtZGVtby0xMi5jbGVyay5hY2NvdW50cy5kZXYk
+          CLERK_SECRET_KEY: sk_test_dummydummydummydummydummydummydummy
+          NEXT_PUBLIC_CONVEX_URL: http://127.0.0.1:3210

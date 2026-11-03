@@ -1,42 +1,80 @@
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #f7f6f2;
+  --surface: #ffffff;
+  --text: #1c2321;
+  --muted: #5d6764;
+  --line: #dcd9d0;
+  --accent: #1f6f5c;
+  --accent-text: #ffffff;
+  --danger: #a33a2b;
+  --warn: #9a5b00;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --bg: #131816;
+    --surface: #1c2220;
+    --text: #ecefed;
+    --muted: #9aa5a1;
+    --line: #2f3834;
+    --accent: #4fb89d;
+    --accent-text: #0e1513;
+    --danger: #e27d6e;
+    --warn: #e0a64a;
   }
 }
 
-html,
+* { box-sizing: border-box; }
 body {
-  max-width: 100vw;
-  overflow-x: hidden;
-}
-
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-* {
-  box-sizing: border-box;
-  padding: 0;
   margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
 }
+.shell { max-width: 880px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: clamp(1.8rem, 5vw, 2.6rem); line-height: 1.15; margin: 8px 0 12px; }
+h2 { font-size: 1.3rem; margin: 24px 0 12px; }
+h3 { font-size: 1.05rem; margin: 20px 0 8px; }
+a { color: var(--accent); }
+.brand { font-weight: 700; letter-spacing: 0.02em; text-decoration: none; color: var(--accent); }
+.hero { padding: 40px 0 16px; }
+.lede { color: var(--muted); max-width: 52ch; }
+.muted { color: var(--muted); }
+.small { font-size: 0.875rem; }
+.ok { color: var(--accent); }
+.error { color: var(--danger); margin: 8px 0 0; }
+.automation { color: var(--warn); margin: 4px 0 0; }
+.empty { padding: 24px 0; }
 
-a {
-  color: inherit;
-  text-decoration: none;
-}
+.topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-bottom: 12px; }
+.who { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.tab { background: none; border: none; border-bottom: 3px solid transparent; padding: 10px 12px; font: inherit; color: var(--muted); cursor: pointer; }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
 
-@media (prefers-color-scheme: dark) {
-  html {
-    color-scheme: dark;
-  }
-}
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.list, .tool-grid { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 12px; }
+.tool-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.card p { margin: 6px 0; }
+.tool-name { display: block; font-weight: 600; margin-bottom: 6px; }
+
+.pill { background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 1px 10px; font-size: 0.8rem; color: var(--muted); }
+.badge { border-radius: 6px; padding: 1px 8px; font-size: 0.78rem; font-weight: 600; text-transform: capitalize; border: 1px solid var(--line); }
+.badge-approved, .badge-returned { color: var(--accent); border-color: var(--accent); }
+.badge-requested { color: var(--warn); border-color: var(--warn); }
+.badge-declined, .badge-cancelled { color: var(--muted); }
+.badge-overdue { color: var(--danger); border-color: var(--danger); }
+
+.btn { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--text); cursor: pointer; text-decoration: none; display: inline-block; }
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.btn.danger { color: var(--danger); border-color: var(--danger); }
+
+label { display: grid; gap: 4px; font-size: 0.875rem; color: var(--muted); }
+label.inline { display: flex; align-items: center; gap: 8px; }
+input, select, textarea { font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--text); }
+.form { display: grid; gap: 12px; }
+.form-inline { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin-top: 8px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

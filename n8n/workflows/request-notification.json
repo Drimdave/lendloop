@@ -1,0 +1,491 @@
+{
+  "id": "lendloopNotify01",
+  "name": "LendLoop - request notification",
+  "active": false,
+  "nodes": [
+    {
+      "id": "n1",
+      "name": "Convex webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        200
+      ],
+      "webhookId": "lendloop-request-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop-request",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      }
+    },
+    {
+      "id": "n2",
+      "name": "Read signature input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Reads the raw request body (the signature covers the exact bytes) and splits\n// the `t=<unix>,v1=<hex>` header. The HMAC itself is computed by the next node.\nconst item = $input.first();\nconst raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');\nconst header = String(item.json.headers?.['x-lendloop-signature'] ?? '');\nconst parts = Object.fromEntries(\n  header.split(',').map((p) => {\n    const i = p.indexOf('=');\n    return [p.slice(0, i).trim(), p.slice(i + 1).trim()];\n  }),\n);\nreturn [\n  {\n    json: {\n      raw,\n      header,\n      t: parts.t ?? '',\n      v1: parts.v1 ?? '',\n      message: `${parts.t}.${raw}`,\n      secretConfigured: Boolean($env.N8N_WEBHOOK_SECRET),\n    },\n  },\n];\n"
+      }
+    },
+    {
+      "id": "n3",
+      "name": "Compute HMAC",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        440,
+        200
+      ],
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.message }}",
+        "dataPropertyName": "expected",
+        "secret": "={{ $env.N8N_WEBHOOK_SECRET }}",
+        "encoding": "hex"
+      }
+    },
+    {
+      "id": "n4",
+      "name": "Check signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Decides whether the webhook call is authentic. Fails closed on every doubt.\nconst { raw, header, t, v1, expected, secretConfigured } = $input.first().json;\n\n// Constant-time comparison so timing does not leak how many characters matched.\nfunction safeEqual(a, b) {\n  if (a.length !== b.length) return false;\n  let diff = 0;\n  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);\n  return diff === 0;\n}\n\nlet reason = '';\nif (!secretConfigured) reason = 'server not configured';\nelse if (!header) reason = 'missing';\nelse if (!t || !v1 || Number.isNaN(Number(t))) reason = 'malformed';\nelse if (Math.abs(Date.now() / 1000 - Number(t)) > 300) reason = 'expired';\nelse if (!safeEqual(String(expected), v1)) reason = 'mismatch';\n\nlet payload = null;\nif (!reason) {\n  try {\n    payload = JSON.parse(raw);\n  } catch {\n    reason = 'bad json';\n  }\n}\n// The payload is only passed on when the signature checked out.\nreturn [{ json: { valid: reason === '', reason, payload } }];\n"
+      }
+    },
+    {
+      "id": "n5",
+      "name": "Signature valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "n6",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n7",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        380
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: \"invalid signature\", reason: $json.reason } }}",
+        "options": {
+          "responseCode": 401
+        }
+      }
+    },
+    {
+      "id": "n8",
+      "name": "Dedupe and render",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        120
+      ],
+      "parameters": {
+        "jsCode": "// Builds the message from the minimal payload and checks whether this event was\n// already delivered. Convex retries on timeouts, so duplicates can happen.\nconst p = $json.payload;\nconst store = $getWorkflowStaticData('global');\nconst alreadySent = Boolean(store.delivered && store.delivered[p.eventId]);\n\nconst oneLine = (s) => String(s ?? '').replace(/[\\r\\n]+/g, ' ').slice(0, 120);\nconst tool = oneLine(p.toolName);\nconst to = p.recipient;\nconst other = oneLine(p.otherParty?.name);\nconst dates = `${p.startDate} to ${p.endDate}`;\n\nconst copy = {\n  'loan.requested': [`New request for your ${tool}`, `${other} would like to borrow your ${tool} (${dates}). Open LendLoop to approve or decline.`],\n  'loan.approved': [`${tool}: request approved`, `${other} approved your request to borrow the ${tool} (${dates}). Please return it on time.`],\n  'loan.declined': [`${tool}: request declined`, `${other} could not lend the ${tool} for ${dates}. Other tools may be available on LendLoop.`],\n  'loan.cancelled': [`${tool}: request withdrawn`, `${other} withdrew their request for your ${tool} (${dates}). No action needed.`],\n  'loan.returned': [`${tool}: marked as returned`, `${other} marked the ${tool} as returned. Thank you for using LendLoop.`],\n}[p.type];\nif (!copy) throw new Error(`Unknown event type: ${oneLine(p.type)}`);\n\nreturn [\n  {\n    json: {\n      eventId: p.eventId,\n      alreadySent,\n      to: to.email,\n      subject: copy[0],\n      text: `Hi ${oneLine(to.name)},\\n\\n${copy[1]}\\n\\nLendLoop`,\n    },\n  },\n];\n"
+      }
+    },
+    {
+      "id": "n9",
+      "name": "Already delivered?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        120
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "n10",
+              "leftValue": "={{ $json.alreadySent }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n11",
+      "name": "Respond duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        20
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: \"duplicate\" } }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "n12",
+      "name": "Send by email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "n13",
+              "leftValue": "={{ $env.NOTIFY_CHANNEL }}",
+              "rightValue": "email",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n14",
+      "name": "Send email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1760,
+        120
+      ],
+      "parameters": {
+        "fromEmail": "={{ $env.MAIL_FROM }}",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.text }}",
+        "options": {}
+      },
+      "credentials": {
+        "smtp": {
+          "id": "lendloop-smtp",
+          "name": "LendLoop SMTP"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "n15",
+      "name": "Respond 502",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        20
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: \"delivery failed\" } }}",
+        "options": {
+          "responseCode": 502
+        }
+      }
+    },
+    {
+      "id": "n16",
+      "name": "Fail run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        20
+      ],
+      "parameters": {
+        "jsCode": "// Runs after \"Respond 502\" has already told Convex the delivery failed (so Convex\n// retries). Throwing here fails the execution, which starts the error workflow and\n// records the failure in Convex for admins to see.\nconst reason = typeof $json.error === 'string' ? $json.error : $json.error?.message;\nthrow new Error(`Notification delivery failed: ${reason ?? 'unknown error'}`);\n"
+      }
+    },
+    {
+      "id": "n17",
+      "name": "Log notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// NOTIFY_CHANNEL=log: write the message to the n8n log instead of sending mail.\n// Only the recipient's address and subject are logged, never the body.\nconsole.log(`[lendloop] notification to ${$json.to}: ${$json.subject}`);\nreturn [{ json: { ...$json, delivered: 'logged' } }];\n"
+      }
+    },
+    {
+      "id": "n18",
+      "name": "Mark processed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Records the event as delivered. This runs only after the send succeeded, so a\n// failed send is retried by Convex instead of being dropped as a duplicate.\nconst { eventId } = $('Dedupe and render').first().json;\nconst store = $getWorkflowStaticData('global');\nstore.delivered = store.delivered || {};\nstore.delivered[eventId] = Date.now();\n\n// Keep the list small: drop the oldest entries beyond 500.\nconst ids = Object.keys(store.delivered);\nif (ids.length > 500) {\n  ids\n    .sort((a, b) => store.delivered[a] - store.delivered[b])\n    .slice(0, ids.length - 500)\n    .forEach((id) => delete store.delivered[id]);\n}\nreturn [{ json: { eventId } }];\n"
+      }
+    },
+    {
+      "id": "n19",
+      "name": "Respond sent",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2200,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: \"sent\", eventId: $json.eventId } }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Convex webhook": {
+      "main": [
+        [
+          {
+            "node": "Read signature input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read signature input": {
+      "main": [
+        [
+          {
+            "node": "Compute HMAC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute HMAC": {
+      "main": [
+        [
+          {
+            "node": "Check signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check signature": {
+      "main": [
+        [
+          {
+            "node": "Signature valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature valid?": {
+      "main": [
+        [
+          {
+            "node": "Dedupe and render",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedupe and render": {
+      "main": [
+        [
+          {
+            "node": "Already delivered?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already delivered?": {
+      "main": [
+        [
+          {
+            "node": "Respond duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send by email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send by email?": {
+      "main": [
+        [
+          {
+            "node": "Send email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send email": {
+      "main": [
+        [
+          {
+            "node": "Mark processed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 502",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 502": {
+      "main": [
+        [
+          {
+            "node": "Fail run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log notification": {
+      "main": [
+        [
+          {
+            "node": "Mark processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark processed": {
+      "main": [
+        [
+          {
+            "node": "Respond sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "errorWorkflow": "lendloopError01"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
