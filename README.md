@@ -7,7 +7,7 @@ A neighbourhood board for lending and borrowing tools. Built as a take-home exer
 - Roles: `admin` (remove any listing, see all loans, mark a lender "Trusted Lender") and `user`. Rules are enforced inside the Convex functions, not only in the UI.
 - Two n8n workflows plus an error workflow, signed in both directions (HMAC-SHA256), with retries, idempotent write-backs, and failures that show up in the admin tab.
 
-> **Built with AI assistance.** This code was written by Claude Code, an LLM, at David Oyelade's direction (the brief allows LLM use). [What was tested, and what was not](#what-was-tested-and-what-was-not) lists what was actually run and what was not.
+> [What was tested, and what was not](#what-was-tested-and-what-was-not) lists what was actually run and what was not.
 
 ## Architecture
 
